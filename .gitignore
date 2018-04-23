@@ -1,0 +1,8 @@
+*.csv
+*.txt
+*.pyc
+.idea
+.ipynb_checkpoints
+*.bak
+*.swp
+*.DS_Store
