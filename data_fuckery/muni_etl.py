@@ -173,3 +173,13 @@ class MuniETL(object):
         ftp.login()
         ftp.cwd('AVL_DATA/AVL_RAW/')
         ftp.retrlines('RETR ' + self.ftp_filename, self.read_ftp)
+
+    def run_everything(self):
+
+        """
+        Runs all the class methods together
+        """
+
+        self.get_sign_id_blocks()
+        self.get_muni_data(bus='33', direction=0)
+        self.connect_ftp()
