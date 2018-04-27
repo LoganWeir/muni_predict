@@ -38,6 +38,7 @@ class Labeling(object):
         # Run all the setup funtions
         self.setup()
 
+    # Pipeline Setup
     def setup(self):
         """
         Runs all the setup functions together.
@@ -142,7 +143,7 @@ class Labeling(object):
 
                 self.in_coll.update_one({'_id':object_id}, update)
 
-
+    # Start Detection and Labeling
     def label_single_starts(self):
         """
         For each block:
@@ -169,8 +170,7 @@ class Labeling(object):
             labeled_starts = self.get_start_labels(single_starts)
 
             # print (single_starts[0]['REPORT_TIME'])
-            print (labeled_starts)
-
+            print (labeled_starts[0]['sched_time_diff_seconds'])
 
     def get_all_starts(self, block):
         """
@@ -276,38 +276,88 @@ class Labeling(object):
     def get_start_labels(self, single_starts):
         """
         Match each start to a trip id based on the trip's starting_stop
-        departure time. Update fields in the document.
+        departure time. Returns a list of updated documents
         """
+
+        output = []
 
         for start in single_starts:
 
-            # Get the service_id of the start based on the day it occured
-            service_id = self.get_start_service_id(start['time_stamp'])
+            # Get all possible scheduled starts, and a cleaned list of possible
+            # departure times
+            schedule, departures = self.get_schedule_departs(start)
 
-            # Bonus! We can add this data to the start itself
-            start['service_id'] = service_id
+            # Parse the doc time to match the departure time
+            raw_time = (start['REPORT_TIME'].split(" ")[1])
+            rawtime_parse = datetime.strptime(raw_time, '%H:%M:%S')
 
-            # Get the block_id of the start
-            block_id = int(start['TRAIN_ASSIGNMENT'])
+            # Get the difference for each row of the departure time series
+            diff_df = departures.apply(lambda x: abs(x-rawtime_parse))
 
-            # Get a dataframe of possible, scheduled starts
-            sched_starts = self.get_scheduled_starts(block_id, service_id)
+            sched_start = schedule.loc[diff_df.idxmin()]
 
-            # From our dataframe, get just the departure times, and parse them
-            dprts = sched_starts['departure_time']
-            tm_frmt = '%H:%M:%S'
-            prsd_dprts = dprts.apply(lambda x: datetime.strptime(x, tm_frmt))
+            time_diff = diff_df.min().seconds
 
-
-
-
-
-        return prsd_dprts
+            start['trip_id'] = int(sched_start['trip_id'])
+            start['sched_time_diff_seconds'] = time_diff
+            start['trip_start'] = 1
 
 
-    def get_start_service_id(self, start_timestamp):
+            cln_date = datetime.fromtimestamp(start['time_stamp'])
+            iso = cln_date.strftime('%Y-%m-%d')
+            start['trip_id_iso'] = str(sched_start['trip_id']) + '_' + iso
+
+            trip_mask = self.trip_blocks['trip_id'] == start['trip_id']
+            trip_trip = self.trip_blocks[trip_mask]['service_id']
+            start['service_id'] = trip_trip.values[0]
+
+            output.append(start)
+
+
+        return output
+
+    # Start Detection/Labeling Utilities
+    def get_schedule_departs(self, start):
+        """
+        Get a dataframe of all possible scheduled departures and a cleaned list
+        of possible departure times as strings.
+        Input: Start Document
+        Output: DataFrame of scheduled starts, series of start times
+        """
+
+        # Get the service_id of the start based on the day it occured
+        # Can be multiple, as buses can be schedule beyond 24 hours (up to
+        # 30:34:00!), and these 'late' buses can overlap with early buses
+        # the next day
+        service_id_lst = self.get_start_service_list(start['time_stamp'])
+
+        # # Bonus! We can add this data to the start itself
+        # start['service_id'] = service_id
+        # NOPE
+        # CAN'T ADD SERVICE ID TILL I FIGURE OUT THE TRIP_ID
+
+        # Get the block_id of the start
+        block_id = int(start['TRAIN_ASSIGNMENT'])
+
+        # Get a dataframe of possible, scheduled starts
+        sched_starts = self.get_scheduled_starts(block_id, service_id_lst)
+
+        # From our dataframe, get just the departure hours
+        dprts = sched_starts['departure_time']
+
+        # Clean the schedule dataframe if there are times greater than 24
+        cln_departs = dprts.apply(lambda x: self.clean_schedules(x))
+
+        # Parse the claened times
+        tm_frmt = '%H:%M:%S'
+        prsd_dprts = cln_departs.apply(lambda x: datetime.strptime(x, tm_frmt))
+
+        return sched_starts, prsd_dprts
+
+    def get_start_service_list(self, start_timestamp):
         """
         Lookup a start's service ID for better trip filtering when labeling
+        Accounts for gosh-darn crazy schedule hours
         Input: A doc's raw 'reported time', as a string
         Output: A service_id (integer between 1 and 3)
         """
@@ -316,24 +366,40 @@ class Labeling(object):
         cln_date = datetime.fromtimestamp(start_timestamp)
         wkdy_num = cln_date.weekday()
 
-        # Using the GTFS calendar, return the service_id at that weekday
-        service_row = self.cal_colnum[self.cal_colnum[wkdy_num] == 1]
-        service_id = service_row['service_id'].values[0]
-        return service_id
+        # The system-wide max departure time is 30:34 (6:34 the next day)
+        # The system-wide min departure time is 02:54 (2:54 this day)
+        # Any departure between these hours could be from a schedule on this day
+        # or the previous day
+        if cln_date.hour <= 7:
+            weekdays = list(set([wkdy_num, wkdy_num-1]))
+        else:
+            weekdays = [wkdy_num]
 
-    def get_scheduled_starts(self, block_id, service_id):
+        # print ("WEEKDAYS: ", weekdays)
+
+        # Using the GTFS calendar, return the service_id for each possible weekday
+        service_ids = []
+        for day in weekdays:
+            service_row = self.cal_colnum[self.cal_colnum[day] == 1]
+            service_ids.append(service_row['service_id'].values[0])
+
+        return service_ids
+
+    def get_scheduled_starts(self, block_id, service_id_list):
         """
         Create a data frame of possible trip start times and id's
+        Accounts for multiple starting days do to scheduled trip starts past
+        24 hours.
         Input:
             Block id of the start
-            Service id of the start
+            List of possible service id's of the start
         Output:
             Dataframe with possible starts
         """
 
         # Setup masks for filtering all the possible trips
         block_mask = self.trip_blocks['block_id'] == block_id
-        service_mask = self.trip_blocks['service_id'] == service_id
+        service_mask = self.trip_blocks['service_id'].isin(service_id_list)
 
         # Apply the masks to the trips DataFrame, getting possible trips
         poss_start_trips = self.trip_blocks[block_mask & service_mask]
@@ -350,3 +416,14 @@ class Labeling(object):
         poss_start_times = poss_start_sched[start_mask]
 
         return poss_start_times
+
+    def clean_schedules(self, time_str):
+
+        times = time_str.split(":")
+        hour = int(times[0])
+        if hour > 24:
+            hour = hour-24
+        if hour == 24:
+            hour = '00'
+
+        return ":".join([str(hour), times[1], times[2]])
