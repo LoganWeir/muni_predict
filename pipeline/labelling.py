@@ -109,6 +109,7 @@ class Labeling(object):
         startings = self.sched_trps[self.sched_trps['stop_sequence'] == 1]
 
         # Get the stop_id from a single sample
+        # This only works here because all 33 trips have the same start
         self.strtng_stopid = startings.sample()['stop_id'].values[0]
 
         # Use that id to find the stop in the class stops DataFrame
@@ -326,6 +327,7 @@ class Labeling(object):
             cln_date = datetime.fromtimestamp(start['time_stamp'])
             iso = cln_date.strftime('%Y-%m-%d')
             start['trip_id_iso'] = str(sched_start['trip_id']) + '_' + iso
+            
 
             # Now that we know the trip, get the actual service id
             trip_mask = self.trip_blocks['trip_id'] == start['trip_id']
@@ -456,7 +458,7 @@ class Labeling(object):
 
         else:
             weekdays = [wkdy_num]
-        
+
         # Using the GTFS calendar, return the service_id for each possible weekday
         service_ids = []
         for day in weekdays:
