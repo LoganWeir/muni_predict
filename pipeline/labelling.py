@@ -5,6 +5,8 @@ import numpy as np
 import pymongo
 from pymongo import MongoClient
 from geopy import distance
+import random
+import string
 
 import get_recent_days as gtdys
 import muni_etl
@@ -157,11 +159,14 @@ class Labeling(object):
             Add these labeled rows to the out_collection
         """
 
+        start_intersection_count = 0
+
         # For each block
         for block in self.blocks:
 
             # Get all intersections with the starting stop
             starts = self.get_all_starts(block)
+            start_intersection_count += len(starts)
 
             # Cluster all these starts in a dictionary
             clusters = self.cluster_starts(starts)
@@ -178,6 +183,8 @@ class Labeling(object):
             unique_count = len(self.out_coll.find().distinct('trip_id_iso'))
             start_count = self.out_coll.count()
 
+        print ("Total Start Intersection Count: ", start_intersection_count)
+        print ("\n")
         print ("Start Count: ", start_count)
         print ("\n")
         print ("Duplicate ID Count: ", unique_count-start_count)
@@ -191,7 +198,7 @@ class Labeling(object):
         """
         start_intersections = []
 
-        for doc in self.in_coll.find({'TRAIN_ASSIGNMENT': block}):
+        for doc in self.in_coll.find({'TRAIN_ASSIGNMENT': block}).sort('time_stamp'):
 
             doc_latlon = (doc['LATITUDE'], doc['LONGITUDE'])
 
@@ -244,7 +251,7 @@ class Labeling(object):
                         time_diff = cln_date - row_dt
 
                         # If these two rows occured within 2 minutes of each other
-                        if time_diff.seconds < 240:
+                        if time_diff.total_seconds() < 120:
 
                             # This row belongs in the cluster! Add it, break the
                             # loop, add to 'matched'
@@ -326,8 +333,10 @@ class Labeling(object):
             # Creat a unique id based on the trip ID and the date of travel
             cln_date = datetime.fromtimestamp(start['time_stamp'])
             iso = cln_date.strftime('%Y-%m-%d')
-            start['trip_id_iso'] = str(sched_start['trip_id']) + '_' + iso
-            
+            rand = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+
+            start['trip_id_iso'] = str(sched_start['trip_id']) + '_' + iso + '_' + rand
+
 
             # Now that we know the trip, get the actual service id
             trip_mask = self.trip_blocks['trip_id'] == start['trip_id']

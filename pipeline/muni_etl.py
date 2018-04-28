@@ -126,6 +126,15 @@ class MuniETL(object):
 
         line_dict = {}
 
+        # Format of injesting time strings
+        time_format = '%m/%d/%Y %H:%M:%S'
+
+        # Convert the reported time to a datetime object
+        cln_date = datetime.strptime(line_list[1], time_format)
+
+        # Add a timestamp to our data for easier sorting
+        line_dict['time_stamp'] = cln_date.timestamp()
+
         for key, val in zip(self.header, line_list):
             line_dict[key] = val
 
