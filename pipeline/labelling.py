@@ -338,7 +338,7 @@ class Labeling(object):
         return output
 
     #########
-    # Trip labelling with the Starts
+    # Trip labelling with the starts
     def label_trips(self):
         """
         Using labeled starts to label entire trips, by iterating through
@@ -388,6 +388,8 @@ class Labeling(object):
         # Add all clean trips to the output collection
         for key, value in self.testdocs.items():
             self.add_to_out_collection(value)
+
+
 
     ##########
     # Detection/Labeling Utilities
@@ -445,12 +447,16 @@ class Labeling(object):
         # Any departure between these hours could be from a schedule on this day
         # or the previous day
         if cln_date.hour <= 7:
-            weekdays = list(set([wkdy_num, wkdy_num-1]))
+
+            # Careful! Can't have negative weekdays
+            if wkdy_num == 0:
+                weekdays = list(set([wkdy_num, 6]))
+            else:
+                weekdays = list(set([wkdy_num, wkdy_num-1]))
+
         else:
             weekdays = [wkdy_num]
-
-        # print ("WEEKDAYS: ", weekdays)
-
+        
         # Using the GTFS calendar, return the service_id for each possible weekday
         service_ids = []
         for day in weekdays:
