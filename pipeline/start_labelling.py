@@ -8,10 +8,6 @@ from geopy import distance
 import random
 import string
 
-import get_recent_days as gtdys
-import muni_etl
-
-
 class Labeling(object):
     """
     Class for labeling raw AVL data with trip_ids
@@ -34,12 +30,8 @@ class Labeling(object):
         # Get all unique blocks in the gtfs-specific collection
         self.blocks = self.in_coll.distinct('TRAIN_ASSIGNMENT')
 
-        ###### TESTING
-        self.blocks = self.blocks[2:3]
-
         # Turn these blocks to integers for later lookup
         self.int_blocks = [int(blk) for blk in self.blocks]
-
 
         self.get_gtfs_dir(gtfs_period)
 
@@ -195,7 +187,6 @@ class Labeling(object):
         print ("\n")
         print ("Duplicate ID Count: ", unique_count-start_count)
         print ("\n")
-
 
     def get_all_starts(self, block):
         """
@@ -363,66 +354,6 @@ class Labeling(object):
         return output
 
 
-
-
-
-
-
-
-
-
-    #########
-    # Trip labelling with the starts
-    def label_trips(self):
-        """
-        Using labeled starts to label entire trips, by iterating through
-        subsequent data until an intersection with the end stop is detected
-        """
-
-        self.testdocs = {}
-
-        self.mini = []
-        self.giant = []
-        self.endless = []
-        self.empty = 0
-
-        # For each start in our out collection
-        for start in self.out_coll.find({ 'trip_start': 1}):
-
-                # Build our search parameters for the in collection
-                search = {}
-                search['TRAIN_ASSIGNMENT'] = start['TRAIN_ASSIGNMENT']
-                search['VEHICLE_TAG'] = str_vehicle = start['VEHICLE_TAG']
-                search['time_stamp'] = {"$gt": start['time_stamp']}
-
-                # Get the lat/lon of the last stop of this trip
-                last_stop = self.get_last_stop(start)
-
-                # Get the tripid_iso identifier with which to label the documents
-                tripid_iso = start['trip_id_iso']
-
-                # Get a list of all labeled documents on this trip
-                trip_docs = self.get_trip_docs(search, last_stop, tripid_iso)
-
-                # If trip_docs isn't None, all it to the clean dictionary
-                if trip_docs:
-                    self.testdocs[tripid_iso] = trip_docs
-
-        # Print labelling stats
-        print ("Total Good Trips: ", len(self.testdocs))
-        print ("\n")
-        print ("Total Emtpy Trips: ", self.empty)
-        print ("\n")
-        print ("Total Sparse Trips: ", len(self.mini))
-        print ("\n")
-        print ("Total Dense Trips: ", len(self.giant))
-        print ("\n")
-        print ("Total 'Endless' Trips: ", len(self.endless))
-
-        # Add all clean trips to the output collection
-        for key, value in self.testdocs.items():
-            self.add_to_out_collection(value)
-
     ##########
     # Detection/Labeling Utilities
     def get_schedule_departs(self, start):
@@ -554,104 +485,3 @@ class Labeling(object):
 
             # Upsert, in case the document already exists in the DB
             self.out_coll.update_one({'_id':doc['_id']}, {'$set':doc}, upsert=True)
-
-    def get_last_stop(self, start):
-        """
-        Gets the last stop for a labeled start's trip
-        Input: A labeled start document
-        Output: A tuple with the lat/lon of the trips last stop
-        """
-
-        # Get the id of the last stop
-        trip_id = start['trip_id']
-        trip_sched = self.sched_trps[self.sched_trps['trip_id'] == trip_id]
-        lst_stop_id = trip_sched.tail(1)['stop_id'].values[0]
-
-        # Get the stop, and pull out it's latitude and longitude
-        ed_stp = self.stop_sched[self.stop_sched['stop_id'] == lst_stop_id]
-        edstp_ltln = (ed_stp['stop_lat'].values[0], ed_stp['stop_lon'].values[0])
-
-        return edstp_ltln
-
-    def get_trip_docs(self, search_params, last_stop, tripid_iso):
-        """
-        Gather and label all documents that follow a start, up until an
-        intersection with the last stop is detected.
-        Input:
-            search_params: dictionary of search params based on the labeled start
-            last_stop: last stop of the labeled start's trip
-            tripid_iso: Unique label to apply to all documents within the trip
-        Output: List of documents labeled with the trip_id
-        """
-
-        # Check if there are enough/too many docs in the trip
-        count = 0
-
-        # Check it our trip every 'ended'
-        breakin = 0
-
-        # Where to collect our labeled trip_docs
-        trip_docs = []
-
-        # Get all relevant docs after our search, sorted
-        search = self.in_coll.find(search_params).sort('time_stamp')
-
-        # Account for starts that occur right at the end of our data
-        if search.count() == 0:
-            self.empty += 1
-            return None
-
-        # Get all documents that match our search, sorted by time_stamp
-        for data in search:
-
-            # Add the label to the document
-            data['trip_id_iso'] = tripid_iso
-
-            # Add the document to our output list
-            trip_docs.append(data)
-
-            # Get the document's lat/lon
-            data_latlon = (data['LATITUDE'], data['LONGITUDE'])
-
-            # Check for last_stop intersection
-            if distance.distance(last_stop, data_latlon).m <= 150:
-
-                # Label the document as the end
-                data['trip_end'] = int(1)
-
-                # Make sure to record each doc, even the last!
-                count += 1
-
-                # Acknowledge that we broke the loop
-                breakin += 1
-
-                # Break the loop
-                break
-
-            # Add to count
-            count += 1
-
-        # Check for lack of ending intersection! :-(
-        if breakin == 0:
-
-            # Add the trip to a separate array
-            self.endless.append(trip_docs)
-
-            return None
-
-        # Check if the trip is unreasonably sparse
-        if count < 40:
-
-            # Add the trip to a separate array
-            self.mini.append(trip_docs)
-
-            return None
-
-        # Check if trip is unreasonably dense
-        if count > 150:
-
-            # Add the trip to a separate array
-            self.giant.append(trip_docs)
-
-        # Otherwise, return our wonderful, clean trip!
-        return trip_docs
