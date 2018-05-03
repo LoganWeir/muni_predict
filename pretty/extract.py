@@ -22,6 +22,8 @@ class Extractor(object):
                 sorted with most recent periods first.
         """
 
+        self.collection = collection
+
         # Get the from/to dates of the period and the directory of the gtfs
         # files
         self.get_gtfs_data(gtfs_period)
@@ -52,16 +54,17 @@ class Extractor(object):
         server_files = self.get_server_files()
 
         # Get the files that fall within our date range
-        self.clean_file_list(server_files)
+        target_files = self.clean_file_list(server_files)
 
-        # testing = self.target_files[0:4]
-        #
-        # for data_file in testing:
-        #
-        #     file_date = data_file[15:-4]
-        #     print ("Getting data from ", file_date)
-        #
-        #     self.connect_read_ftp(data_file)
+        for data_file in target_files:
+
+            file_date = data_file[15:-4]
+            print ("Getting data from ", file_date)
+
+            self.connect_read_ftp(data_file)
+
+        print ("Total lines read: ", self.total_count)
+        print ("Filtered lines kept: ", self.filter_count)
 
 
     ############
@@ -86,6 +89,8 @@ class Extractor(object):
         Clean and filter filenames from the FTP server
         """
 
+        target_files = []
+
         for item in files:
 
             if item[0:11] != 'sfmtaAVLRaw':
@@ -100,7 +105,9 @@ class Extractor(object):
 
             if file_time >= self.from_date and file_time < self.to_date:
 
-                self.target_files.append(item)
+                target_files.append(item)
+
+        return target_files
 
     def connect_read_ftp(self, file):
         """
@@ -144,7 +151,7 @@ class Extractor(object):
 
             ln_splt = line.split(",")
 
-            if ln_splt[7] in self.self.block_names:
+            if ln_splt[7] in self.block_names:
 
                 self.filter_count += 1
 
