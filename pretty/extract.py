@@ -13,7 +13,7 @@ class Extractor(object):
         -Loading the data into MongoDB
     """
 
-    def __init__(self, collection, gtfs_period=0):
+    def __init__(self, collection, gtfs_period=0, days=30):
 
         """
         Input:
@@ -21,6 +21,8 @@ class Extractor(object):
                 Indices can be looked up in data/gtfs_lookup.csv. The file is
                 sorted with most recent periods first.
         """
+
+        self.days = days
 
         self.collection = collection
 
@@ -30,7 +32,6 @@ class Extractor(object):
 
         self.total_count = 0
         self.filter_count = 0
-
 
     ############
     # MAIN METHODS
@@ -56,6 +57,10 @@ class Extractor(object):
         # Get the files that fall within our date range
         target_files = self.clean_file_list(server_files)
 
+        if self.days:
+            if self.days + 1 < len(target_files):
+                target_files = target_files[0:days+1]
+
         for data_file in target_files:
 
             file_date = data_file[15:-4]
@@ -65,6 +70,7 @@ class Extractor(object):
 
         print ("Total lines read: ", self.total_count)
         print ("Filtered lines kept: ", self.filter_count)
+
 
 
     ############
