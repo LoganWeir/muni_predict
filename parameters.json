@@ -1,0 +1,5 @@
+{
+  "ftp_days": 30,
+  "gtfs_period": 0,
+  "database": "muni_prediction_data"
+}
