@@ -9,7 +9,7 @@ import src.label_trips as label_trips
 
 
 # Load in our parameters file
-with open('parameters.json') as f:
+with open('data/parameters.json') as f:
     params = json.load(f)
 
 # Get relevant parameters
