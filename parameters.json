@@ -1,5 +1,9 @@
 {
-  "ftp_days": 30,
+  "ftp_days": 4,
   "gtfs_period": 0,
-  "database": "muni_prediction_data"
+  "database": "muni_prediction_data",
+  "avl_collection": "avl_raw",
+  "labeled_collection": "labeled_trips",
+  "bus": "33",
+  "direction": 0
 }

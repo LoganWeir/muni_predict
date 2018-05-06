@@ -13,18 +13,32 @@ class Extractor(object):
         -Loading the data into MongoDB
     """
 
-    def __init__(self, collection, gtfs_period=0, days=30):
+    def __init__(self, collection, bus='33', direction=0,
+                    gtfs_period=0, days=30):
 
         """
         Input:
-            -gtfs_period: Index of the gtfs periods we wish to get data for.
+            -collection:
+                The MongoDB collection into which filter data will be inserted
+            -bus:
+                The name of the route for which we wish to get data. The names of all
+                routes can be found in data/muni_routes.csv
+            -direction:
+                The direction of travel of our route for which we want data. Usually
+                0 or 1
+            -gtfs_period:
+                Index of the gtfs period we wish to get data for.
                 Indices can be looked up in data/gtfs_lookup.csv. The file is
-                sorted with most recent periods first.
+                sorted with most recent periods first
+            -days:
+                The number of days for which we want data, starting with the most
+                recent of the gtfs period first. If None, will get all days
         """
 
         self.days = days
-
         self.collection = collection
+        self.bus = bus
+        self.direction = direction
 
         # Get the from/to dates of the period and the directory of the gtfs
         # files
@@ -37,29 +51,38 @@ class Extractor(object):
     # MAIN METHODS
     ############
 
-    def setup(self, bus='33', direction=0):
+    def setup(self):
+        """
+        Sets up the instance
+        """
 
         # Get the id of the route we want to get data for
-        self.get_route_id(bus=bus)
+        self.get_route_id(bus=self.bus)
 
         # Get the ids of all trips along this route
-        self.get_trip_ids(direction=direction)
+        self.get_trip_ids(direction=self.direction)
 
         # Get the trip block 'names' relevant to our gtfs period and used by
         # trips along our route
         self.get_signid_blocknames()
 
+
     def get_insert_data(self):
+        """
+        Gets the data, filters it, inserts it into the collection
+        """
 
         # Get all file names from the server
         server_files = self.get_server_files()
 
         # Get the files that fall within our date range
-        target_files = self.clean_file_list(server_files)
+        target_files = self.clean_file_list(server_files)[::-1]
 
+        # Filter by day count if it exists
         if self.days:
             if self.days + 1 < len(target_files):
-                target_files = target_files[0:days+1]
+                target_files = target_files[0:self.days]
+
 
         for data_file in target_files:
 
@@ -72,6 +95,90 @@ class Extractor(object):
         print ("Filtered lines kept: ", self.filter_count)
 
 
+    def run(self):
+        """
+        Runs everything
+        """
+        self.setup()
+
+        self.get_insert_data()
+
+    ############
+    # GTFS Setup Tools
+    ############
+
+    def get_gtfs_data(self, gtfs_period):
+        """
+        Sets the date range of the extractor and gtfs directory
+        Input:
+            gtfs_period: Index of the gtfs_lookup file to use
+        """
+
+        gtfs_df = pd.read_csv('data/gtfs_lookup.csv')
+        gtfs_series = gtfs_df.iloc[gtfs_period]
+
+        from_txt = gtfs_series['from_date']
+        self.from_date = datetime.strptime(from_txt, '%Y-%m-%d')
+        self.from_txt = from_txt
+
+        to_txt = gtfs_series['to_date']
+        self.to_date = datetime.strptime(to_txt, '%Y-%m-%d')
+        self.to_txt = to_txt
+
+        self.gtfs_dir = gtfs_series['directory']
+
+        self.sign_id = gtfs_series['sign_id']
+
+    def get_route_id(self, bus):
+        """
+        Gets the route ID of the bus route given
+        """
+
+        route_txt = 'data/gtfs/{}/routes.txt'.format(self.gtfs_dir)
+        routes = pd.read_csv(route_txt)
+
+        # Cleaning route names to make look-up easier
+        routes['cln_rts'] = routes['route_short_name'].apply(lambda x: x.strip())
+
+        # Get the routes id for our busline
+        self.route_id = routes[routes['cln_rts'] == bus]['route_id'].values[0]
+
+    def get_trip_ids(self, direction):
+        """
+        Get the ids of all trips associated with the given route
+        """
+
+        # Load in the trips
+        trip_txt = 'data/gtfs/{}/trips.txt'.format(self.gtfs_dir)
+        trips = pd.read_csv(trip_txt)
+
+        # Get all the trips on the route, going in the same direction
+        trip_mask = (trips['route_id'] == self.route_id) \
+            & (trips['direction_id'] == self.direction)
+        bus_trips = trips[trip_mask]
+
+        # Get an array of all the unique block numbers from the 33 trips
+        self.trip_blocks = bus_trips['block_id'].unique()
+
+    def get_signid_blocknames(self):
+        """
+        Get the 'names' of all blocks that correspond to our trips and timeframe
+        """
+
+        # Load in the block reference data for connecting blocks in the
+        # AVL data to our specific time periods
+        blckrf_txt = 'data/lookUpBlockIDToBlockNumNam.csv'
+        blockref = pd.read_csv(blckrf_txt)
+
+        # Get all blocks in our time frame
+        date_blocks = blockref[blockref['SIGNID'] == self.sign_id]
+
+        # Filter our date-constrained blocks to our trip blocks
+        dt_trp_mask = date_blocks['BLOCKNUM'].isin(self.trip_blocks)
+        dt_trp_blcks = date_blocks[dt_trp_mask]
+
+        # Finally, get all the block names that correspond to the block numbers
+        self.block_names = dt_trp_blcks['BLOCKNAME'].unique()
 
     ############
     # Get Data Tools
@@ -163,6 +270,7 @@ class Extractor(object):
 
                 self.dict_db_insert(ln_splt)
 
+
     def dict_db_insert(self, line_list):
         """
         Given a split line of data, zip it to headers, turn it into a dictionary
@@ -185,75 +293,3 @@ class Extractor(object):
             line_dict[key] = val
 
         self.collection.insert_one(line_dict)
-
-
-    ############
-    # GTFS Setup Tools
-    ############
-
-    def get_gtfs_data(self, gtfs_period):
-        """
-        Sets the date range of the extractor and gtfs directory
-        Input:
-            gtfs_period: Index of the gtfs_lookup file to use
-        """
-
-        gtfs_df = pd.read_csv('data/gtfs_lookup.csv')
-        gtfs_series = gtfs_df.iloc[gtfs_period]
-
-        from_txt = gtfs_series['from_date']
-        self.from_date = datetime.strptime(from_txt, '%Y-%m-%d')
-        self.from_txt = from_txt
-
-        to_txt = gtfs_series['to_date']
-        self.to_date = datetime.strptime(to_txt, '%Y-%m-%d')
-        self.to_txt = to_txt
-
-        self.gtfs_dir = gtfs_series['directory']
-
-        self.sign_id = gtfs_series['sign_id']
-
-    def get_route_id(self, bus):
-
-        route_txt = 'data/gtfs/{}/routes.txt'.format(self.gtfs_dir)
-        routes = pd.read_csv(route_txt)
-
-        # Cleaning route names to make look-up easier
-        routes['cln_rts'] = routes['route_short_name'].apply(lambda x: x.strip())
-
-        # Get the routes id for our busline
-        self.route_id = routes[routes['cln_rts'] == bus]['route_id'].values[0]
-
-    def get_trip_ids(self, direction):
-
-        # Load in the trips
-        trip_txt = 'data/gtfs/{}/trips.txt'.format(self.gtfs_dir)
-        trips = pd.read_csv(trip_txt)
-
-        # Get all the trips on the route, going in the same direction
-        trip_mask = (trips['route_id'] == self.route_id) \
-            & (trips['direction_id'] == 0)
-        bus_trips = trips[trip_mask]
-
-        # Get an array of all the unique block numbers from the 33 trips
-        self.trip_blocks = bus_trips['block_id'].unique()
-
-    def get_signid_blocknames(self):
-        """
-        Get the 'names' of all blocks that correspond to our trips and timeframe
-        """
-
-        # Load in the block reference data for connecting blocks in the
-        # AVL data to our specific time periods
-        blckrf_txt = 'data/lookUpBlockIDToBlockNumNam.csv'
-        blockref = pd.read_csv(blckrf_txt)
-
-        # Get all blocks in our time frame
-        date_blocks = blockref[blockref['SIGNID'] == self.sign_id]
-
-        # Filter our date-constrained blocks to our trip blocks
-        dt_trp_mask = date_blocks['BLOCKNUM'].isin(self.trip_blocks)
-        dt_trp_blcks = date_blocks[dt_trp_mask]
-
-        # Finally, get all the block names that correspond to the block numbers
-        self.block_names = dt_trp_blcks['BLOCKNAME'].unique()

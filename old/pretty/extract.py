@@ -13,7 +13,7 @@ class Extractor(object):
         -Loading the data into MongoDB
     """
 
-    def __init__(self, collection, gtfs_period=0, days=30):
+    def __init__(self, collection, gtfs_period=0, days=5):
 
         """
         Input:
@@ -59,7 +59,7 @@ class Extractor(object):
 
         if self.days:
             if self.days + 1 < len(target_files):
-                target_files = target_files[0:days+1]
+                target_files = target_files[0:self.days]
 
         for data_file in target_files:
 

@@ -8,7 +8,7 @@ from geopy import distance
 import random
 import string
 
-class TripLabeling(object):
+class TripLabeler(object):
     """
     Class for labeling raw AVL data with trip_ids
     Data should all be:
@@ -17,16 +17,20 @@ class TripLabeling(object):
         In one direction
     """
 
-    def __init__(self, raw_collection, start_collection,
-                    trip_collection, gtfs_period=0):
+    def __init__(self, raw_collection, trip_collection, gtfs_period=0):
         """
         Input:
-            in_collection: Collection we are pulling raw data from
-            out_collection: Collection we are inserting labeled data into
+            raw_collection:
+                Collection we are pulling raw data from
+            trip_collection:
+                Collection we are inserting labeled data into
+            gtfs_period:
+                Index of the gtfs period we wish to get data for.
+                Indices can be looked up in data/gtfs_lookup.csv. The file is
+                sorted with most recent periods first
         """
 
         self.raw_coll = raw_collection
-        self.strt_coll = start_collection
         self.trip_coll = trip_collection
 
         # Get all unique blocks in the gtfs-specific collection
@@ -35,6 +39,7 @@ class TripLabeling(object):
         # Turn these blocks to integers for later lookup
         self.int_blocks = [int(blk) for blk in self.blocks]
 
+        # Setup the instance
         self.get_gtfs_dir(gtfs_period)
         self.load_filter_gtfs()
 
@@ -88,7 +93,6 @@ class TripLabeling(object):
                        'friday':4, 'saturday':5, 'sunday':6}
         self.cal_colnum = calendar.rename(columns=cal_col_mapping)
 
-
     #########
     # Trip labelling with the starts
     def label_trips(self):
@@ -97,60 +101,62 @@ class TripLabeling(object):
         subsequent data until an intersection with the end stop is detected
         """
 
-        self.testdocs = {}
-
+        # Count up good/bap trips
+        self.good_trip_count = 0
         self.good_doc_count = 0
-
-        self.mini = []
-        self.giant = []
-        self.endless = []
+        self.mini = 0
+        self.giant = 0
+        self.endless = 0
         self.empty = 0
+        self.sparse = 0
 
         # For each start in our out collection
-        for start in self.strt_coll.find({ 'trip_start': 1}):
+        for start in self.trip_coll.find({ 'trip_start': 1}):
 
-                # Build our search parameters for the in collection
-                search = {}
-                search['TRAIN_ASSIGNMENT'] = start['TRAIN_ASSIGNMENT']
-                search['VEHICLE_TAG'] = str_vehicle = start['VEHICLE_TAG']
-                search['time_stamp'] = {"$gt": start['time_stamp']}
+            # Build our search parameters for the in collection
+            search = {}
+            search['TRAIN_ASSIGNMENT'] = start['TRAIN_ASSIGNMENT']
+            search['VEHICLE_TAG'] = start['VEHICLE_TAG']
 
-                # Get the lat/lon of the last stop of this trip
-                last_stop = self.get_last_stop(start)
+            # Get documents that occur after the trip start, up to 3 hours
+            plus_3hr = start['time_stamp'] + 10800
+            search['time_stamp'] = {"$gt": start['time_stamp'], "$lt": plus_3hr}
 
-                # Get the tripid_iso identifier with which to label the documents
-                tripid_iso = start['trip_id_iso']
+            # Don't get other trip starts
+            search['trip_start'] = { "$exists": False}
 
-                # Get a list of all labeled documents on this trip
-                trip_docs = self.get_trip_docs(search, last_stop, tripid_iso)
+            # Don't get previously labeled data
+            search['trip_id_iso'] = {"$exists": False}
 
-                # If trip_docs isn't None, all it to the clean dictionary
-                if trip_docs:
-                    self.testdocs[tripid_iso] = trip_docs
-                    self.good_doc_count += len(trip_docs)
+            # Get the lat/lon of the last stop of this trip
+            last_stop = self.get_last_stop(start)
+
+            # Get the tripid_iso identifier with which to label the documents
+            tripid_iso = start['trip_id_iso']
+
+            # Get a list of all labeled documents on this trip
+            self.get_trip_docs(search, last_stop, tripid_iso)
+
+
+        start_count = self.trip_coll.find({ 'trip_start': 1}).count()
 
         # Print labelling stats
-        print ("Total Starts: ", self.strt_coll.count())
+        print ("----------------")
+        print ("Total Good Trips: ", self.good_trip_count)
         print ("\n")
-        print ("Total Good Trips: ", len(self.testdocs))
+        print ("Total Good Documents", self.good_doc_count + start_count)
         print ("\n")
         print ("Total Emtpy Trips: ", self.empty)
         print ("\n")
-        print ("Total Sparse Trips: ", len(self.mini))
+        print ("Total Mini Trips: ", self.mini)
         print ("\n")
-        print ("Total Dense Trips: ", len(self.giant))
+        print ("Total Gigantic Trips: ", self.giant)
         print ("\n")
-        print ("Total 'Endless' Trips: ", len(self.endless))
-        totes_count = len(self.testdocs) + self.empty + len(self.mini) \
-            + len(self.giant) + len(self.endless)
-        print ("Total Trips: ", totes_count)
+        print ("Total 'Endless' Trips: ", self.endless)
         print ("\n")
-        print ("Total Good, Labeled Trip Docs: ", self.strt_coll.count() \
-            + self.good_doc_count)
+        print ("Total Sparse Trips: ", self.sparse)
+        print ("\n")
 
-        # Add all clean trips to the output collection
-        for key, value in self.testdocs.items():
-            self.add_to_out_collection(value)
 
     def get_last_stop(self, start):
         """
@@ -170,6 +176,7 @@ class TripLabeling(object):
 
         return edstp_ltln
 
+
     def get_trip_docs(self, search_params, last_stop, tripid_iso):
         """
         Gather and label all documents that follow a start, up until an
@@ -184,6 +191,9 @@ class TripLabeling(object):
         # Check if there are enough/too many docs in the trip
         count = 0
 
+        # Check if the trip is too sparsely sampled
+        sparse = False
+
         # Check it our trip every 'ended'
         breakin = 0
 
@@ -191,15 +201,28 @@ class TripLabeling(object):
         trip_docs = []
 
         # Get all relevant docs after our search, sorted
-        search = self.raw_coll.find(search_params).sort('time_stamp')
+        search = list(self.raw_coll.find(search_params).sort('time_stamp'))
 
         # Account for starts that occur right at the end of our data
-        if search.count() == 0:
+        if not search:
             self.empty += 1
+            self.trip_coll.delete_one({'trip_id_iso': tripid_iso})
             return None
 
         # Get all documents that match our search, sorted by time_stamp
-        for data in search:
+        for idx, data in enumerate(search):
+            data_ts = data['time_stamp']
+
+            if idx != 0:
+                last_doc = search[idx-1]
+                last_ts = last_doc['time_stamp']
+                diff = data_ts - last_ts
+
+                # If the time_stamp of this document is 5 minutes after the next:
+                if diff > 180:
+                    sparse = True
+                    breakin += 1
+                    break
 
             # Add the label to the document
             data['trip_id_iso'] = tripid_iso
@@ -237,30 +260,39 @@ class TripLabeling(object):
         if breakin == 0:
 
             # Add the trip to a separate array
-            self.endless.append(trip_docs)
+            self.endless += 1
+            self.trip_coll.delete_one({'trip_id_iso': tripid_iso})
+            return None
 
+        elif sparse == True:
+
+            self.sparse += 1
+            self.trip_coll.delete_one({'trip_id_iso': tripid_iso})
             return None
 
         # Check if the trip is unreasonably sparse
         elif count < 40:
 
             # Add the trip to a separate array
-            self.mini.append(trip_docs)
-
+            self.mini += 1
+            self.trip_coll.delete_one({'trip_id_iso': tripid_iso})
             return None
 
         # Check if trip is unreasonably dense
         elif count > 150:
 
             # Add the trip to a separate array
-            self.giant.append(trip_docs)
-
+            self.giant +=1
+            self.trip_coll.delete_one({'trip_id_iso': tripid_iso})
             return None
 
         # Otherwise, return our wonderful, clean trip!
         else:
+            self.good_trip_count += 1
+            self.good_doc_count += len(trip_docs)
+            self.add_to_out_collection(trip_docs)
+            return None
 
-            return trip_docs
 
     def add_to_out_collection(self, list):
         """

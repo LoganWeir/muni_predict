@@ -8,7 +8,7 @@ from geopy import distance
 import random
 import string
 
-class StartLabeling(object):
+class StartLabeler(object):
     """
     Class for labeling raw AVL data with trip_ids
     Data should all be:
@@ -20,8 +20,14 @@ class StartLabeling(object):
     def __init__(self, in_collection, out_collection, gtfs_period=0):
         """
         Input:
-            in_collection: Collection we are pulling raw data from
-            out_collection: Collection we are inserting labeled data into
+            in_collection:
+                Collection we are pulling raw data from
+            out_collection:
+                Collection we are inserting labeled data into
+            gtfs_period:
+                Index of the gtfs period we wish to get data for.
+                Indices can be looked up in data/gtfs_lookup.csv. The file is
+                sorted with most recent periods first
         """
 
         self.in_coll = in_collection
@@ -48,7 +54,6 @@ class StartLabeling(object):
 
         self.load_filter_gtfs()
         self.find_starting_stop()
-        self.check_add_timestamps()
 
     def get_gtfs_dir(self, gtfs_period):
         """
@@ -119,30 +124,6 @@ class StartLabeling(object):
         self.strting_latlon = (self.strtng_stop['stop_lat'].values[0], \
             self.strtng_stop['stop_lon'].values[0])
 
-    def check_add_timestamps(self):
-        """
-        LEGACY (2018-4-26)
-        Shouldn't be necessary when the FTP pipeline is update to add a
-        timestamp to each row. Still, it's nice to be careful.
-        """
-
-        # Count with 'time_stamp' field, total count
-        ts_cnt = self.in_coll.find({ 'time_stamp': { '$exists': True}}).count()
-        total_cnt = self.in_coll.find().count()
-
-        # If they are different, all a timestamp to any document lacking one.
-        if ts_cnt != total_cnt:
-
-            for doc in self.in_coll.find({ 'time_stamp': { '$exists': False}}):
-
-                object_id = doc['_id']
-                time_format = '%m/%d/%Y %H:%M:%S'
-                cln_date = datetime.strptime(doc['REPORT_TIME'], time_format)
-                time_stamp = cln_date.timestamp()
-
-                update =  {"$set": {'time_stamp':time_stamp}}
-
-                self.in_coll.update_one({'_id':object_id}, update)
 
 
     #########
@@ -181,6 +162,8 @@ class StartLabeling(object):
             unique_count = len(self.out_coll.find().distinct('trip_id_iso'))
             start_count = self.out_coll.count()
 
+        print ("\n")
+        print ("----------------")
         print ("Total Start Intersection Count: ", start_intersection_count)
         print ("\n")
         print ("Start Count: ", start_count)
@@ -208,7 +191,7 @@ class StartLabeling(object):
 
     def cluster_starts(self, starts):
         """
-        Clusters starting_stop intersections by time (within 2 minutes of any
+        Clusters starting_stop intersections by time (within 15 minutes of any
         row in the cluster)
         Input: List of rows that intersect with the starting_stop
         Output: Dictionary of lists, each list being a cluster (key is irrelevant)
@@ -245,8 +228,12 @@ class StartLabeling(object):
                         row_date = datetime.fromtimestamp(row_ts)
                         time_diff = item_date - row_date
 
+                        # Don't cluster data that isn't from the same trip
+                        if time['VEHICLE_TAG'] != item['VEHICLE_TAG']:
+                            break
+
                         # If these two rows occured within 2 minutes of each other
-                        if time_diff.total_seconds() < 110:
+                        if time_diff.total_seconds() < 900:
 
                             # This row belongs in the cluster! Add it, break the
                             # loop, add to 'matched'
@@ -257,7 +244,6 @@ class StartLabeling(object):
 
                     # Don't match our document to other starting clusters if
                     # it has already been matched
-
                     if matched != 0:
                         break
 
@@ -478,7 +464,7 @@ class StartLabeling(object):
 
     def add_to_out_collection(self, list):
         """
-        Takes a list of dictionaries and adds them to the output dictionary
+        Takes a list of labeled documents and adds them to the output dictionary
         """
 
         for doc in list:
