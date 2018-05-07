@@ -1,9 +1,11 @@
 {
-  "ftp_days": 4,
+  "ftp_days": 50,
   "gtfs_period": 0,
   "database": "muni_prediction_data",
   "avl_collection": "avl_raw",
   "labeled_collection": "labeled_trips",
+  "chunk_collection": "chunk_details",
   "bus": "33",
-  "direction": 0
+  "direction": 0,
+  "chunks": [2,6]
 }
