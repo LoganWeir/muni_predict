@@ -20,8 +20,6 @@ class TripChunker(object):
         self.trip_coll = trip_collection
         self.chunk_coll = chunk_collection
 
-        # self.sched = pd.read_csv('data/scheduled_stop_info.csv')
-
         self.all_trip_ids = self.trip_coll.distinct('trip_id_iso')
 
     def chunk_trips(self):

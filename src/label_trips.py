@@ -42,6 +42,7 @@ class TripLabeler(object):
         # Setup the instance
         self.get_gtfs_dir(gtfs_period)
         self.load_filter_gtfs()
+        self.get_max_last_stop()
 
     #########
     # Pipeline Setup
@@ -93,6 +94,24 @@ class TripLabeler(object):
                        'friday':4, 'saturday':5, 'sunday':6}
         self.cal_colnum = calendar.rename(columns=cal_col_mapping)
 
+    def get_max_last_stop(self):
+        """
+        We want to get the last stop of the longest possible trip of this route.
+        This way, we will build models across similar trips, but can still make
+        predictions on smaller trips that are subsections of the biggest trip.
+        """
+
+        # Get the id of the last stop in the longest trip
+        seq_max_idx = self.sched_trps['stop_sequence'].idxmax()
+        max_stop_id = self.sched_trps.loc[seq_max_idx]['stop_id']
+
+        # Get the stop, and pull out it's latitude and longitude
+        ed_stp = self.stop_sched[self.stop_sched['stop_id'] == max_stop_id]
+        edstp_ltln = (ed_stp['stop_lat'].values[0], ed_stp['stop_lon'].values[0])
+
+        self.last_stop = edstp_ltln
+
+
     #########
     # Trip labelling with the starts
     def label_trips(self):
@@ -128,14 +147,14 @@ class TripLabeler(object):
             # Don't get previously labeled data
             search['trip_id_iso'] = {"$exists": False}
 
-            # Get the lat/lon of the last stop of this trip
-            last_stop = self.get_last_stop(start)
+            # # Get the lat/lon of the last stop of this trip
+            # last_stop = self.get_last_stop(start)
 
             # Get the tripid_iso identifier with which to label the documents
             tripid_iso = start['trip_id_iso']
 
             # Get a list of all labeled documents on this trip
-            self.get_trip_docs(search, last_stop, tripid_iso)
+            self.get_trip_docs(search, tripid_iso)
 
 
         start_count = self.trip_coll.find({ 'trip_start': 1}).count()
@@ -177,13 +196,12 @@ class TripLabeler(object):
         return edstp_ltln
 
 
-    def get_trip_docs(self, search_params, last_stop, tripid_iso):
+    def get_trip_docs(self, search_params, tripid_iso):
         """
         Gather and label all documents that follow a start, up until an
         intersection with the last stop is detected.
         Input:
             search_params: dictionary of search params based on the labeled start
-            last_stop: last stop of the labeled start's trip
             tripid_iso: Unique label to apply to all documents within the trip
         Output: List of documents labeled with the trip_id
         """
@@ -231,7 +249,7 @@ class TripLabeler(object):
             data_latlon = (data['LATITUDE'], data['LONGITUDE'])
 
             # Check for last_stop intersection
-            if distance.distance(last_stop, data_latlon).m <= 150:
+            if distance.distance(self.last_stop, data_latlon).m <= 150:
 
                 # Label the document as the end
                 data['trip_end'] = int(1)
