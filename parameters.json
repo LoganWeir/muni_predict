@@ -5,6 +5,7 @@
   "avl_collection": "avl_raw",
   "labeled_collection": "labeled_trips",
   "chunk_collection": "chunk_details",
+  "duration_collection": "trips_total_duration",
   "bus": "33",
   "direction": 0,
   "chunks": [2,6]
