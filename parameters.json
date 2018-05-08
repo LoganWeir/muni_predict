@@ -1,14 +1,1 @@
-{
-  "ftp_days": 50,
-  "gtfs_period": 0,
-  "database": "muni_prediction_data",
-  "avl_collection": "avl_raw",
-  "labeled_collection": "labeled_trips",
-  "chunk_collection": "chunk_details",
-  "duration_collection": "trips_total_duration",
-  "two_chunk_collection": "two_chunk_trips",
-  "six_chunk_collection": "six_chunk_trips",
-  "bus": "33",
-  "direction": 0,
-  "chunks": [2,6]
-}
+{"ftp_days": 50, "gtfs_period": 0, "database": "muni_prediction_data", "avl_collection": "avl_raw", "labeled_collection": "labeled_trips", "chunk_collection": "chunk_details", "duration_collection": "trips_total_duration", "bus": "33", "direction": 0, "chunks": [2, 6], "chunk_2_collection": "chunk_2_collection", "chunk_6_collection": "chunk_6_collection"}

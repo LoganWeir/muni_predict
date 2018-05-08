@@ -7,7 +7,10 @@ from pymongo import MongoClient
 
 def temporal_features_total(trip_id_list, trip_collection, output_collection):
 
-    for trip in trip_id_list:
+    for idx, trip in enumerate(trip_id_list):
+
+        print ("Getting total duration data for ", trip)
+        print ("Number ", idx+1, " of ", len(trip_id_list))
 
         start_search = {
                 'trip_id_iso': trip,
@@ -29,6 +32,9 @@ def temporal_features_total(trip_id_list, trip_collection, output_collection):
             start_ts = trip_start['time_stamp']
             end_ts = trip_end['time_stamp']
 
+            trip_dict['start_timestamp'] = start_ts
+            trip_dict['trip_id_iso'] = trip
+
             trip_duration = end_ts - start_ts
             trip_dict['duration'] = trip_duration
 
@@ -43,24 +49,37 @@ def temporal_features_total(trip_id_list, trip_collection, output_collection):
             output_collection.insert_one(trip_dict)
 
 
-def two_chunk_data(trip_id_list, trip_collection, chunk_collection, output_collection):
+def chunk_data_interval(trip_id_list, trip_collection, chunk_collection,
+                        output_collection, chunk_interval):
 
-    two_cnk_info = chunk_collection.find_one({'number_chunks':2})
+    cnk_info = chunk_collection.find_one({'number_chunks':chunk_interval})
 
     for idx, trip in enumerate(trip_id_list):
 
-        print ("Getting Two-Chunk data for ", trip)
+        trip_data = {}
+
+        print ("Getting ", chunk_interval, " Chunk data for ", trip)
         print ("Number ", idx+1, " of ", len(trip_id_list))
 
-        trip_data = {}
+        start_search = {
+                'trip_id_iso': trip,
+                'trip_start': 1
+            }
+
+        trip_start = trip_collection.find_one(start_search)
+
+        trip_data['start_timestamp'] = trip_start['time_stamp']
+        trip_data['trip_id_iso'] = trip
 
         breakin = 0
 
-        for chnk_seq, chnk_data in two_cnk_info['chunks'].items():
+        for chnk_seq, chnk_data in cnk_info['chunks'].items():
+
+            field = "chunk_" + str(chunk_interval)
 
             search = {
                 'trip_id_iso': trip,
-                'chunk_2': chnk_seq
+                field: chnk_seq
             }
 
             chnk_str = '_chnk_' + chnk_seq
@@ -79,7 +98,7 @@ def two_chunk_data(trip_id_list, trip_collection, chunk_collection, output_colle
             min_dt = datetime.fromtimestamp(min_ts)
             mfn_sq = (((min_dt.hour * 60) + min_dt.minute) - 720)**2
 
-            trip_data['chnk1_mfn_sq' + chnk_str] = mfn_sq
+            trip_data['mfn_sq' + chnk_str] = mfn_sq
 
             avg_spd = chnk_df['SPEED'].astype('float').mean()
 
