@@ -25,7 +25,10 @@ class TripChunker(object):
     def chunk_trips(self):
 
         # For each trip...
-        for trip in self.all_trip_ids:
+        for idx, trip in enumerate(self.all_trip_ids):
+
+            print ("Chunking Trip ", trip)
+            print ("Number ", idx+1, " of ", len(self.all_trip_ids))
 
             # For each chunk interval set...
             for chunk in self.chunk_coll.find():
