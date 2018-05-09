@@ -1,5 +1,3 @@
-*.csv
-*.txt
 *.pyc
 .idea
 .ipynb_checkpoints
